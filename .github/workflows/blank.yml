@@ -1,0 +1,195 @@
+# .github/workflows/deploy.yml
+# GitHub Actions workflow for deploying BeamMP server to Windows VPS
+
+name: Deploy BeamMP Server
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Setup PowerShell
+      uses: microsoft/setup-msbuild@v1.1
+      
+    - name: Validate Configuration
+      shell: pwsh
+      run: |
+        Write-Host "Validating server configuration..." -ForegroundColor Yellow
+        
+        # Check if required files exist
+        $requiredFiles = @(
+          "scripts/install.ps1",
+          "config/ServerConfig.toml"
+        )
+        
+        foreach ($file in $requiredFiles) {
+          if (!(Test-Path $file)) {
+            Write-Host "ERROR: Required file missing: $file" -ForegroundColor Red
+            exit 1
+          } else {
+            Write-Host "✓ Found: $file" -ForegroundColor Green
+          }
+        }
+        
+        # Validate TOML configuration
+        $configContent = Get-Content "config/ServerConfig.toml" -Raw
+        if ($configContent -match "YOUR_AUTH_KEY_HERE") {
+          Write-Host "WARNING: AuthKey not configured in ServerConfig.toml" -ForegroundColor Orange
+        }
+        
+        Write-Host "Configuration validation complete" -ForegroundColor Green
+
+    # Only deploy on main branch pushes (not PRs)
+    - name: Deploy to VPS
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      shell: pwsh
+      run: |
+        Write-Host "=== Deploying to Windows VPS ===" -ForegroundColor Green
+        
+        # This is a placeholder for actual VPS deployment
+        # You would typically use SSH, WinRM, or a deployment agent
+        
+        Write-Host "Deployment would happen here with your VPS credentials" -ForegroundColor Yellow
+        Write-Host "Configure the following secrets in your GitHub repository:" -ForegroundColor Cyan
+        Write-Host "- VPS_HOST: Your VPS IP address" -ForegroundColor White
+        Write-Host "- VPS_USERNAME: Your VPS username" -ForegroundColor White  
+        Write-Host "- VPS_PASSWORD: Your VPS password" -ForegroundColor White
+        Write-Host "- BEAMMP_AUTH_KEY: Your BeamMP authentication key" -ForegroundColor White
+
+  # Actual deployment job (uncomment and configure when ready)
+  # deploy-to-vps:
+  #   runs-on: ubuntu-latest
+  #   needs: deploy
+  #   if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+  #   
+  #   steps:
+  #   - name: Checkout Repository
+  #     uses: actions/checkout@v4
+  #   
+  #   - name: Deploy via SSH
+  #     uses: appleboy/ssh-action@v0.1.5
+  #     with:
+  #       host: ${{ secrets.VPS_HOST }}
+  #       username: ${{ secrets.VPS_USERNAME }}
+  #       password: ${{ secrets.VPS_PASSWORD }}
+  #       port: 22
+  #       script: |
+  #         # Stop existing server
+  #         Get-Process -Name "BeamMP-Server" -ErrorAction SilentlyContinue | Stop-Process -Force
+  #         
+  #         # Update repository
+  #         cd C:\BeamMP-Server
+  #         git pull origin main
+  #         
+  #         # Update server binary
+  #         .\update-server.ps1
+  #         
+  #         # Update configuration with secrets
+  #         (Get-Content config\ServerConfig.toml) -replace 'YOUR_AUTH_KEY_HERE', '${{ secrets.BEAMMP_AUTH_KEY }}' | Set-Content config\ServerConfig.toml
+  #         
+  #         # Restart server
+  #         Start-Process powershell.exe -ArgumentList "-File start-server.ps1" -WindowStyle Hidden
+
+  test-config:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Test Server Configuration
+      shell: pwsh
+      run: |
+        Write-Host "=== Testing Server Configuration ===" -ForegroundColor Green
+        
+        # Test PowerShell script syntax
+        Write-Host "Testing PowerShell scripts..." -ForegroundColor Yellow
+        $scripts = @("scripts/install.ps1")
+        
+        foreach ($script in $scripts) {
+          if (Test-Path $script) {
+            try {
+              $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content $script -Raw), [ref]$null)
+              Write-Host "✓ $script syntax is valid" -ForegroundColor Green
+            } catch {
+              Write-Host "✗ $script has syntax errors: $($_.Exception.Message)" -ForegroundColor Red
+              exit 1
+            }
+          }
+        }
+        
+        # Test TOML configuration
+        Write-Host "Testing TOML configuration..." -ForegroundColor Yellow
+        if (Test-Path "config/ServerConfig.toml") {
+          $config = Get-Content "config/ServerConfig.toml" -Raw
+          
+          # Basic TOML validation (check for common issues)
+          if ($config -match '^\s*\[.*\]\s*$') {
+            Write-Host "✓ TOML structure looks valid" -ForegroundColor Green
+          } else {
+            Write-Host "⚠ TOML structure might be invalid" -ForegroundColor Orange
+          }
+          
+          # Check required fields
+          $requiredFields = @("Name", "Port", "Max_Players", "AuthKey")
+          foreach ($field in $requiredFields) {
+            if ($config -match "$field\s*=") {
+              Write-Host "✓ Found required field: $field" -ForegroundColor Green
+            } else {
+              Write-Host "✗ Missing required field: $field" -ForegroundColor Red
+            }
+          }
+        }
+        
+        Write-Host "Configuration testing complete" -ForegroundColor Green
+
+  create-release:
+    runs-on: windows-latest
+    needs: [deploy, test-config]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Create Release Package
+      shell: pwsh
+      run: |
+        Write-Host "=== Creating Release Package ===" -ForegroundColor Green
+        
+        # Create release directory
+        $releaseDir = "beammp-server-release"
+        New-Item -ItemType Directory -Path $releaseDir -Force
+        
+        # Copy files to release directory
+        $filesToCopy = @(
+          "scripts/*",
+          "config/*", 
+          "README.md"
+        )
+        
+        foreach ($pattern in $filesToCopy) {
+          Copy-Item -Path $pattern -Destination $releaseDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        # Create zip file
+        Compress-Archive -Path $releaseDir -DestinationPath "beammp-server-vps.zip" -Force
+        
+        Write-Host "Release package created: beammp-server-vps.zip" -ForegroundColor Green
+        
+    - name: Upload Release Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: beammp-server-vps
+        path: beammp-server-vps.zip
+        retention-days: 30
